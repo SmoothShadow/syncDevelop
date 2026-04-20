@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SyncDevelop - 剪贴板同步</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+
+.header { background: #16213e; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #0f3460; }
+.header h1 { font-size: 18px; color: #e94560; }
+.status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8899aa; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #4ecca3; animation: pulse 2s infinite; }
+.dot.offline { background: #e94560; animation: none; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+.container { max-width: 800px; margin: 0 auto; padding: 20px; }
+
+.card { background: #16213e; border-radius: 12px; padding: 20px; margin-bottom: 16px; border: 1px solid #0f3460; }
+.card h2 { font-size: 14px; color: #8899aa; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+.input-area { width: 100%; background: #1a1a2e; border: 1px solid #0f3460; border-radius: 8px; padding: 12px; color: #e0e0e0; font-size: 14px; resize: vertical; min-height: 80px; outline: none; font-family: inherit; }
+.input-area:focus { border-color: #e94560; }
+.btn { background: #e94560; color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-top: 8px; transition: background 0.2s; }
+.btn:hover { background: #c73a54; }
+.btn-secondary { background: #0f3460; }
+.btn-secondary:hover { background: #1a4a8a; }
+
+.history-list { display: flex; flex-direction: column; gap: 8px; max-height: 500px; overflow-y: auto; }
+.history-item { background: #1a1a2e; border-radius: 8px; padding: 12px; border: 1px solid #0f3460; cursor: pointer; transition: border-color 0.2s; }
+.history-item:hover { border-color: #e94560; }
+.history-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; color: #8899aa; }
+.history-type { background: #0f3460; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+.history-type.text { color: #4ecca3; }
+.history-type.image { color: #e94560; }
+.history-type.file { color: #ffd460; }
+.history-from { color: #7a8ba8; }
+.history-content { font-size: 14px; white-space: pre-wrap; word-break: break-all; max-height: 100px; overflow: hidden; color: #ccc; line-height: 1.5; }
+.history-content img { max-width: 100%; border-radius: 4px; }
+
+.drop-zone { border: 2px dashed #0f3460; border-radius: 8px; padding: 24px; text-align: center; color: #8899aa; transition: border-color 0.2s; cursor: pointer; }
+.drop-zone.dragover { border-color: #e94560; color: #e94560; }
+
+.empty { text-align: center; color: #556; padding: 40px; font-size: 14px; }
+
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #4ecca3; color: #1a1a2e; padding: 8px 20px; border-radius: 8px; font-size: 14px; display: none; z-index: 100; }
+.toast.show { display: block; animation: fadein 0.3s; }
+@keyframes fadein { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+.row { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>SyncDevelop</h1>
+  <div class="status">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">连接中...</span>
+  </div>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>手动推送</h2>
+    <textarea class="input-area" id="textInput" placeholder="输入文本内容，按 Ctrl+Enter 发送..."></textarea>
+    <div class="row">
+      <button class="btn" onclick="sendText()">发送</button>
+      <button class="btn btn-secondary" onclick="pasteAndSend()">粘贴并发送</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>文件上传</h2>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      拖拽文件到此处，或点击选择文件
+      <input type="file" id="fileInput" style="display:none" onchange="uploadFile(this.files[0])" multiple>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>同步历史</h2>
+    <div class="history-list" id="historyList">
+      <div class="empty">暂无同步记录</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let refreshTimer;
+
+// 页面加载时开始轮询
+document.addEventListener('DOMContentLoaded', () => {
+  refreshStatus();
+  refreshHistory();
+  refreshTimer = setInterval(() => {
+    refreshStatus();
+    refreshHistory();
+  }, 2000);
+});
+
+// 刷新设备状态
+async function refreshStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    if (data.isServer) {
+      text.textContent = `服务端 · ${data.localIP} · ${data.clientCount} 个客户端`;
+      dot.className = 'dot';
+    } else {
+      text.textContent = `客户端 · ${data.localIP}`;
+      dot.className = data.clientCount > 0 ? 'dot' : 'dot offline';
+    }
+  } catch (e) {
+    document.getElementById('statusText').textContent = '未连接';
+    document.getElementById('statusDot').className = 'dot offline';
+  }
+}
+
+// 刷新历史记录
+async function refreshHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const entries = await res.json();
+    const list = document.getElementById('historyList');
+    if (!entries || entries.length === 0) {
+      list.innerHTML = '<div class="empty">暂无同步记录</div>';
+      return;
+    }
+    list.innerHTML = entries.reverse().map(e => {
+      const typeLabel = e.type === 'clip_text' ? '文本' : e.type === 'clip_image' ? '图片' : '文件';
+      const typeClass = e.type === 'clip_text' ? 'text' : e.type === 'clip_image' ? 'image' : 'file';
+      const time = new Date(e.timestamp).toLocaleTimeString();
+      let content = '';
+      if (e.type === 'clip_text') {
+        content = escapeHtml(e.content).substring(0, 500);
+      } else if (e.type === 'clip_image') {
+        content = e.content;
+      } else {
+        content = (e.fileName || '文件') + (e.fileSize ? ` (${formatSize(e.fileSize)})` : '');
+      }
+      return `<div class="history-item" onclick="copyContent(this, '${e.type}', '${escapeAttr(e.content)}')">
+        <div class="history-meta">
+          <span class="history-type ${typeClass}">${typeLabel}</span>
+          <span class="history-from">${e.from} · ${time}</span>
+        </div>
+        <div class="history-content">${content}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+// 发送文本
+async function sendText() {
+  const input = document.getElementById('textInput');
+  const text = input.value.trim();
+  if (!text) return;
+  await fetch('/api/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+  input.value = '';
+  showToast('已发送');
+  refreshHistory();
+}
+
+// 粘贴并发送
+async function pasteAndSend() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      document.getElementById('textInput').value = text;
+      sendText();
+    }
+  } catch (e) {
+    showToast('无法读取剪贴板');
+  }
+}
+
+// 复制内容到剪贴板
+function copyContent(el, type, content) {
+  if (type === 'clip_text') {
+    navigator.clipboard.writeText(content).then(() => showToast('已复制'));
+  }
+}
+
+// 文件上传
+async function uploadFile(file) {
+  if (!file) return;
+  const formData = new FormData();
+  formData.append('file', file);
+  await fetch('/api/upload', { method: 'POST', body: formData });
+  showToast('文件已上传: ' + file.name);
+  refreshHistory();
+}
+
+// 拖拽处理
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  for (const file of e.dataTransfer.files) {
+    uploadFile(file);
+  }
+});
+
+// Ctrl+Enter 发送
+document.getElementById('textInput').addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'Enter') sendText();
+});
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show';
+  setTimeout(() => t.className = 'toast', 2000);
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function escapeAttr(str) {
+  return str.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n');
+}
+
+function formatSize(bytes) {
+  if (bytes >= 1048576) return (bytes/1048576).toFixed(1) + 'MB';
+  if (bytes >= 1024) return (bytes/1024).toFixed(1) + 'KB';
+  return bytes + 'B';
+}
+</script>
+</body>
+</html>
