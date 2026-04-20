@@ -15,8 +15,8 @@ import (
 
 func main() {
 	mode := flag.String("mode", "server", "运行模式: server / client")
-	addr := flag.String("addr", "", "服务端: 监听地址(默认 :8080) / 客户端: 服务端地址")
-	webAddr := flag.String("web", ":8081", "Web管理界面地址")
+	addr := flag.String("addr", "", "服务端: 监听地址(默认 :9836) / 客户端: 服务端地址")
+	webAddr := flag.String("web", ":9837", "Web管理界面地址")
 	name := flag.String("name", "", "设备名称 (默认: 主机名-系统)")
 	flag.Parse()
 
@@ -34,13 +34,13 @@ func main() {
 	var syncAddr string
 	if isServer {
 		if *addr == "" {
-			syncAddr = ":8080"
+			syncAddr = ":9836"
 		} else {
 			syncAddr = *addr
 		}
 	} else {
 		if *addr == "" {
-			log.Fatal("[Main] 客户端模式请指定 -addr 服务端地址 (如 192.168.1.100:8080)")
+			log.Fatal("[Main] 客户端模式请指定 -addr 服务端地址 (如 192.168.1.100:9836)")
 		}
 		syncAddr = *addr
 	}
