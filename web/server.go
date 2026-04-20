@@ -186,9 +186,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from := r.FormValue("from")
+	itemType := ItemFile
+	if isImageFile(header.Filename) {
+		itemType = ItemImage
+	}
 	item := SyncItem{
 		ID:        fmt.Sprintf("%d", time.Now().UnixMilli()),
-		Type:      ItemFile,
+		Type:      itemType,
 		Content:   savePath,
 		FileName:  header.Filename,
 		FileSize:  written,
@@ -208,7 +212,7 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	var filePath, fileName string
 	for _, item := range s.items {
-		if item.ID == id && item.Type == ItemFile {
+		if item.ID == id && (item.Type == ItemFile || item.Type == ItemImage) {
 			filePath = item.Content
 			fileName = item.FileName
 			break
@@ -239,7 +243,7 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i, item := range s.items {
 		if item.ID == id {
-			if item.Type == ItemFile {
+			if item.Type == ItemFile || item.Type == ItemImage {
 				os.Remove(item.Content)
 			}
 			s.items = append(s.items[:i], s.items[i+1:]...)
@@ -261,7 +265,7 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	for _, item := range s.items {
-		if item.Type == ItemFile {
+		if item.Type == ItemFile || item.Type == ItemImage {
 			os.Remove(item.Content)
 		}
 	}
@@ -334,9 +338,19 @@ func (s *Server) addItem(item SyncItem) {
 	s.items = append(s.items, item)
 	if len(s.items) > s.maxItems {
 		removed := s.items[0]
-		if removed.Type == ItemFile {
+		if removed.Type == ItemFile || removed.Type == ItemImage {
 			os.Remove(removed.Content)
 		}
 		s.items = s.items[1:]
 	}
+}
+
+func isImageFile(name string) bool {
+	lower := strings.ToLower(name)
+	for _, ext := range []string{".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
