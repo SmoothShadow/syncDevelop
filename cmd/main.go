@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":9836", "监听地址")
+	addr := flag.String("addr", ":9837", "监听地址")
 	dir := flag.String("dir", "./syncfiles", "文件存储目录")
 	flag.Parse()
 
